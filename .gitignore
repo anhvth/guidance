@@ -14,3 +14,5 @@ node_modules
 
 # Ignore native library built by setup
 guidance/*.so
+.hypothesis/
+guidance/.nfs*
