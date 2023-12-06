@@ -1,5 +1,7 @@
+from openai import chat
 import torch
 from ._transformers import Transformers
+from ._transformers import TransformersChat
 from loguru import logger
 
 
@@ -80,3 +82,5 @@ class Qwen(Transformers):
         assert ret is not None, "Something went wrong with the cache!"
         return ret
     
+class QwenChat(Qwen, TransformersChat):
+    pass
