@@ -738,7 +738,7 @@ type {function['name']} = (_: {{"""
                 # if requested we compute the log probabilities so we can track the probabilities of each node
                 if self.compute_log_probs:
                     if torch:
-                        probs_torch = torch.nn.functional.softmax(torch.tensor(logits), dim=-1)
+                        probs_torch = torch.nn.functional.softmax(torch.tensor(logits).float(), dim=-1)
                         probs = probs_torch.cpu().numpy() # note we don't adjust for temp since we consider that a sampling step, not part of the probs
                     else:
                         probs = softmax(logits, axis=-1) # this numpy code is slower, so we don't use it if we have torch...
