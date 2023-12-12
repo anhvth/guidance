@@ -583,15 +583,19 @@ type {function['name']} = (_: {{"""
         
         # get our current context in bytes
         prompt = self._current_prompt()
-        prompt = bytes(prompt, encoding="utf8")
+        bprompt = bytes(prompt, encoding="utf8")
 
-        # add the beginning of sequence token if needed
-        if ensure_bos_token and self.bos_token is not None and not prompt.startswith(self.bos_token):
-            prompt = self.bos_token + prompt
+        # # add the beginning of sequence token if needed
+        # if ensure_bos_token and self.bos_token is not None and not prompt.startswith(self.bos_token):
+        #     prompt = self.bos_token + prompt
         
-        # run a simple tokenizer (that does not use a grammar) on the prefix for better performance
-        token_ids,token_byte_positions = self._tokenize_prefix(prompt)
-        token_ids,token_byte_positions = self._cleanup_tokens(token_ids,token_byte_positions)
+        # # run a simple tokenizer (that does not use a grammar) on the prefix for better performance
+        btoken_ids,token_byte_positions = self._tokenize_prefix(bprompt)
+        # token_ids,token_byte_positions = self._cleanup_tokens(token_ids,token_byte_positions)
+        healed_prompt = bprompt[:token_byte_positions[-1]] if len(token_byte_positions) > 0 else bprompt
+        healed_prompt = str(healed_prompt, encoding="utf8")
+        token_ids = self._orig_tokenizer(healed_prompt).input_ids
+        prompt = bprompt
         if len(token_byte_positions) > 0:
             pre_parser_bytes = token_byte_positions[-1]
             prompt = prompt[token_byte_positions[-1]:]

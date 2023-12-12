@@ -19,6 +19,8 @@ class Qwen(Transformers):
     ):
         logger.info("Set tokenizer.eos_token_id = tokenizer.eod_id")
         tokenizer.eos_token_id = tokenizer.eod_id
+        
+        self.generated_logits = []
         super().__init__(
             model=model,
             tokenizer=tokenizer,
@@ -54,6 +56,7 @@ class Qwen(Transformers):
         past_key_values = self._cache_state["past_key_values"]
         past_length = past_key_values[0][0].size(1) if past_key_values is not None else 0
         if past_length > num_cached:
+            self.generated_logits = []
             past_length = max(0, num_cached - 1) # note we recompute the last token because we don't bother to handle the special case of just computing logits
             self._cache_state["past_key_values"] = tuple(tuple(p[:, :past_length] for p in v) for v in past_key_values)
         cache_token_ids[past_length:] = []
@@ -76,7 +79,11 @@ class Qwen(Transformers):
             # save the results
             self._cache_state["past_key_values"] = model_out.past_key_values
             cache_token_ids.extend(new_token_ids)
-            self._cache_state["logits"] = model_out.logits[0, -1, :].cpu().float().numpy()
+            logits = model_out.logits[0, -1, :].cpu().float().softmax(-1)
+            score, token_id = logits.topk(1)
+            self.generated_logits.append([score, token_id])
+
+            self._cache_state["logits"] = logits.numpy()
         
         ret = self._cache_state["logits"]
         assert ret is not None, "Something went wrong with the cache!"
