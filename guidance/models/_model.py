@@ -581,24 +581,14 @@ type {function['name']} = (_: {{"""
     def __call__(self, grammar, max_tokens=1000000, n=1, top_p=1, temperature=0.0, ensure_bos_token=True):
         assert n == 1, "Still need to add support for n > 1!"
         
-        # get our current context in bytes
         prompt = self._current_prompt()
-        bprompt = bytes(prompt, encoding="utf8")
-
-        # # add the beginning of sequence token if needed
-        # if ensure_bos_token and self.bos_token is not None and not prompt.startswith(self.bos_token):
-        #     prompt = self.bos_token + prompt
-        
-        # # run a simple tokenizer (that does not use a grammar) on the prefix for better performance
-        btoken_ids,token_byte_positions = self._tokenize_prefix(bprompt)
-        # token_ids,token_byte_positions = self._cleanup_tokens(token_ids,token_byte_positions)
-        healed_prompt = bprompt[:token_byte_positions[-1]] if len(token_byte_positions) > 0 else bprompt
-        healed_prompt = str(healed_prompt, encoding="utf8")
+        sprompt = prompt.split(' ')
+        healed_prompt = ' '.join(sprompt[:-1])
         token_ids = self._orig_tokenizer(healed_prompt).input_ids
-        prompt = bprompt
+        token_byte_positions = [len(bytes(healed_prompt, encoding="utf8"))]
         if len(token_byte_positions) > 0:
             pre_parser_bytes = token_byte_positions[-1]
-            prompt = prompt[token_byte_positions[-1]:]
+            prompt = ' '.join(sprompt[-1:])
         else:
             pre_parser_bytes = 0
         
@@ -755,6 +745,8 @@ type {function['name']} = (_: {{"""
                 # get the sampling order
                 grammar_temp = parser.next_byte_temperature()
                 current_temp = grammar_temp if grammar_temp >= 0 else temperature # we prefer to use the grammar temp when it is specified
+                logits = logits[:len(self.tokens)] # we only need the logits for the tokens, not the bytes
+                # import ipdb; ipdb.set_trace()
                 if current_temp == 0:
                     sampling_order = np.argsort(-logits) # we need numpy so the enumerate below does not get really slow...
                 else:
