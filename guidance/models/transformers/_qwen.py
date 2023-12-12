@@ -76,7 +76,7 @@ class Qwen(Transformers):
             # save the results
             self._cache_state["past_key_values"] = model_out.past_key_values
             cache_token_ids.extend(new_token_ids)
-            self._cache_state["logits"] = model_out.logits[0, -1, :].cpu().numpy()
+            self._cache_state["logits"] = model_out.logits[0, -1, :].cpu().float().numpy()
         
         ret = self._cache_state["logits"]
         assert ret is not None, "Something went wrong with the cache!"

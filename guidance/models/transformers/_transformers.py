@@ -45,8 +45,10 @@ class Transformers(Model):
                 byte_coded = bytes([tkz.byte_decoder[c] for c in tkz.convert_ids_to_tokens(i)])
                 byte_tokens.append(byte_coded)
         else:
-            byte_tokens = [bytes(tkz.convert_tokens_to_string(['a', tkz.convert_ids_to_tokens(i)])[1:], encoding="utf8") for i in range(len(tkz))]
-
+            byte_tokens = []
+            for i in range(len(tkz)):
+                tok = bytes(tkz.convert_tokens_to_string(['a', tkz.convert_ids_to_tokens(i)])[1:], encoding="utf8") 
+                byte_tokens.append(tok)
         # the superclass does most of the work once we have the tokens
         super().__init__(
             byte_tokens,
@@ -127,7 +129,7 @@ class Transformers(Model):
             # save the results
             self._cache_state["past_key_values"] = model_out.past_key_values
             cache_token_ids.extend(new_token_ids)
-            self._cache_state["logits"] = model_out.logits[0, -1, :].cpu().numpy()
+            self._cache_state["logits"] = model_out.logits[0, -1, :].float().cpu().numpy()
         
         return self._cache_state["logits"]
     
