@@ -40,6 +40,9 @@ class Qwen(Transformers):
         forced_bytes is a list of bytes objects that will be forced to appear
         """
         # make sure we don't run off the end of the model
+        
+        _x = self._orig_tokenizer.decode(token_ids)
+        
         if len(token_ids) >= getattr(
             self.model_obj.config, "max_position_embeddings", 1e10
         ):
@@ -49,6 +52,7 @@ class Qwen(Transformers):
 
         # get the number of cache positions we are using
         cache_token_ids = self._cache_state["cache_token_ids"]
+        
         num_cached = 0
         for id in cache_token_ids:
             if (
@@ -64,6 +68,7 @@ class Qwen(Transformers):
         past_length = (
             past_key_values[0][0].size(1) if past_key_values is not None else 0
         )
+        # import ipdb; ipdb.set_trace()
         if past_length > num_cached:
             self.generated_logits = []
             past_length = max(
