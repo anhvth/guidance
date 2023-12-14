@@ -581,15 +581,23 @@ type {function['name']} = (_: {{"""
     def __call__(self, grammar, max_tokens=1000000, n=1, top_p=1, temperature=0.0, ensure_bos_token=True):
         assert n == 1, "Still need to add support for n > 1!"
         
+        # get our current context in bytes
         prompt = self._current_prompt()
-        sprompt = prompt.split(' ')
-        healed_prompt = ' '.join(sprompt[:-1])
-        token_ids = self._orig_tokenizer(healed_prompt).input_ids
-        token_byte_positions = [len(bytes(healed_prompt, encoding="utf8"))]
+        prompt = bytes(prompt, encoding="utf8")
+
+        # add the beginning of sequence token if needed
+        if ensure_bos_token and self.bos_token is not None and not prompt.startswith(self.bos_token):
+            prompt = self.bos_token + prompt
+        
+        # run a simple tokenizer (that does not use a grammar) on the prefix for better performance
+        token_ids,token_byte_positions = self._tokenize_prefix(prompt)
+        token_ids,token_byte_positions = self._cleanup_tokens(token_ids,token_byte_positions)
         if len(token_byte_positions) > 0:
             pre_parser_bytes = token_byte_positions[-1]
-            prompt = ' '.join(sprompt[-1:])
+            trimmed_prompt_prefix = prompt[:token_byte_positions[-1]]
+            prompt = prompt[token_byte_positions[-1]:]
         else:
+            trimmed_prompt_prefix = b''
             pre_parser_bytes = 0
         
         # create a parser with a grammar that includes both our context and the passed grammar
