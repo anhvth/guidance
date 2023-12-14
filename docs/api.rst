@@ -5,6 +5,16 @@ API Reference
 This page contains the API reference for public objects and functions in Guidance.
 
 
+.. _Program_api:
+
+Program creation (a.k.a. `guidance(program_string)`)
+-----------
+.. autosummary::
+    :toctree: generated/
+
+    guidance.Program
+
+
 .. _library_api:
 
 library
@@ -12,18 +22,37 @@ library
 .. autosummary::
     :toctree: generated/
 
-    guidance.user
-    guidance.system
+    guidance.library.add
+    guidance.library.assistant
+    guidance.library.await_
+    guidance.library.block
+    guidance.library.break_
+    guidance.library.each
+    guidance.library.equal
+    guidance.library.gen
+    guidance.library.geneach
+    guidance.library.if_
+    guidance.library.role
+    guidance.library.select
+    guidance.library.set
+    guidance.library.shell
+    guidance.library.strip
+    guidance.library.subtract
+    guidance.library.system
+    guidance.library.unless
+    guidance.library.user
 
-.. _models_api:
+.. _llms_api:
 
-models
+llms
 -----
 .. autosummary::
     :toctree: generated/
 
-    guidance.Model
-    guidance.LlamaCpp
-    guidance.Transformers
-    guidance.VertexAI
-    guidance.OpenAI
+    guidance.llms.OpenAI
+    guidance.llms.Transformers
+    guidance.llms.transformers.LLaMA
+    guidance.llms.transformers.MPT
+    guidance.llms.transformers.StableLM
+    guidance.llms.transformers.Vicuna
+    guidance.llms.transformers.Koala

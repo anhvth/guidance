@@ -79,7 +79,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = 'Guidance'
-copyright = '2023, Guidance contributors'
+copyright = '2023, Microsoft'
 author = 'Scott Lundberg, Marco Tulio Ribeiro'
 
 # The version info for the project you're documenting, acts as replacement for
