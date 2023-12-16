@@ -14,13 +14,15 @@ import copy
 import time
 import numpy as np
 import logging
+import base64
+
 logger = logging.getLogger(__name__)
 try:
     from .. import cpp
 except ImportError:
     logger.warn("Failed to load guidance.cpp, falling back to Python mirror implementations...")
     from .. import _cpp as cpp
-from .._utils import ByteTrie, log_softmax, softmax
+from .._utils import softmax
 from .._parser import EarleyCommitParser
 from .._grammar import StatelessFunction, string, _call_pool, _tag_pattern, Null, replace_model_variables, unreplace_model_variables, select, Terminal
 
@@ -29,6 +31,7 @@ _null_grammar = string('')
 format_pattern = re.compile(r"<\|\|_.*?_\|\|>", flags=re.DOTALL)
 nodisp_pattern = re.compile(r"&lt;\|\|_#NODISP_\|\|&gt;.*?&lt;\|\|_/NODISP_\|\|&gt;", flags=re.DOTALL)
 html_pattern = re.compile(r"&lt;\|\|_html:(.*?)_\|\|&gt;", flags=re.DOTALL)
+image_pattern = re.compile(r"&lt;\|_image:(.*?)\|&gt;")
 
 class Model:
     '''A guidance model object, which represents a sequence model in a given state.
@@ -104,7 +107,7 @@ class Model:
 
         # add any active non-empty role ends. Ignore role ends that are spaces
         parts = []
-        for role_end_str in self.opened_blocks.values():
+        for _, role_end_str in self.opened_blocks.values():
             role_end_str = format_pattern.sub("", role_end_str)
             if len(role_end_str) > 0 and not re.fullmatch(r'\s+', role_end_str):
                 parts.append(role_end_str)
@@ -118,11 +121,12 @@ class Model:
         '''Generate HTML that displays the model object.'''
         display_out = self._state
         for context in reversed(self.opened_blocks):
-            display_out += self.opened_blocks[context]
+            display_out += self.opened_blocks[context][1]
         display_out = html.escape(display_out)
         display_out = nodisp_pattern.sub("", display_out)
         display_out = html_pattern.sub(lambda x: html.unescape(x.group(1)), display_out)
-        display_out = "<pre style='margin: 0px; padding: 0px; padding-left: 8px; margin-left: -8px; border-radius: 0px; border-left: 1px solid rgba(127, 127, 127, 0.2); white-space: pre-wrap; font-family: ColfaxAI, Arial; font-size: 15px; line-height: 23px;'>"+display_out+"</pre>"
+        display_out = image_pattern.sub(lambda x: '<img src="data:image/png;base64,' + base64.b64encode(self[x.groups(1)[0]]).decode() + '" style="max-width: 400px; vertical-align: middle; margin: 4px;">', display_out)
+        display_out = "<pre style='margin: 0px; padding: 0px; vertical-align: middle; padding-left: 8px; margin-left: -8px; border-radius: 0px; border-left: 1px solid rgba(127, 127, 127, 0.2); white-space: pre-wrap; font-family: ColfaxAI, Arial; font-size: 15px; line-height: 23px;'>"+display_out+"</pre>"
         return display_out
     
     def _send_to_event_queue(self, value):
@@ -168,19 +172,23 @@ class Model:
         self._state += str(value) # TODO: make _state to be bytes not a string
 
         # see if we should update the display
-        if self.echo and not force_silent:
+        if not force_silent:
+            self._update_display()
+        
+        # TODO: is this needed? This was for programmatic streaming...
+        self._send_to_event_queue(self)
+
+    def _update_display(self, throttle=True):
+        if self.echo:
             if Model._throttle_refresh > 0:
                 curr_time = time.time()
-                if curr_time - self._last_display < self.max_display_rate:
+                if throttle and curr_time - self._last_display < self.max_display_rate:
                     return # we are throttling the update
                 else:
                     self._last_display = curr_time
         
             clear_output(wait=True)
             display(HTML(self._html()))
-        
-        # TODO: is this needed? This was for programmatic streaming...
-        self._send_to_event_queue(self)
     
     def reset(self, clear_variables=True):
         '''This resets the state of the model object.
@@ -208,7 +216,7 @@ class Model:
         '''A string representation of the current model object (that includes context closers).'''
         out = self._current_prompt()
         for context in reversed(self.opened_blocks):
-            out += format_pattern.sub("", self.opened_blocks[context])
+            out += format_pattern.sub("", self.opened_blocks[context][1])
         return out
     
     def __add__(self, value):
@@ -230,19 +238,28 @@ class Model:
             # close any newly closed contexts
             for context in list(reversed(lm.opened_blocks)):
                 if context not in Model.open_blocks and context in lm.opened_blocks:
-                    close_text = lm.opened_blocks[context] # save so we can delete it before adding it
+                    pos, close_text = lm.opened_blocks[context] # save so we can delete it before adding it
+                    if context.name is not None:
+                        lm._variables[context.name] = format_pattern.sub("", lm._state[pos:])
                     del lm.opened_blocks[context]
                     lm._inplace_append(close_text)
 
             # apply any newly opened contexts (new from this object's perspective)
             for context in Model.open_blocks:
                 if context not in lm.opened_blocks:
-                    lm.opened_blocks[context] = "" # mark this so we don't readd when computing the opener (even though we don't know the close text yet)
+                    lm.opened_blocks[context] = (0, "") # mark this so we don't readd when computing the opener (even though we don't know the close text yet)
                     lm += context.opener
                     with grammar_only():
                         tmp = lm + context.closer
                     close_text = tmp._state[len(lm._state):] # get the new state added by calling the closer
-                    lm.opened_blocks[context] = close_text
+                    lm.opened_blocks[context] = (len(lm._state), close_text)
+                    
+                    # clear out names that we override
+                    if context.name is not None:
+                        if context.name in lm._variables:
+                            del lm._variables[context.name]
+                            if context.name in lm._variables_log_probs:
+                                del lm._variables_log_probs[context.name]
             
             # wrap raw string values
             if isinstance(value, str):
@@ -285,6 +302,8 @@ class Model:
             # run stateful functions
             else:
                 out = value(lm)
+                if out is None:
+                    raise Exception(f"A guidance function did not return a model object! Did you forget to return the new lm at the end of your function?")
         
         # this flushes the display
         out._inplace_append("")
@@ -306,7 +325,14 @@ class Model:
         raise Exception("Model objects are immutable so you can't use __setitem__! Consider using the .set(key, value) method instead to create a new updated model object.")
 
     def __getitem__(self, key):
-        return self._variables[key]
+        if key in self._variables:
+            return self._variables[key]
+        
+        # look for named blocks that are still open with the given key as their name
+        else:
+            for context in list(reversed(self.opened_blocks)):
+                if context.name == key:
+                    return format_pattern.sub("", self._state[self.opened_blocks[context][0]:])
     
     def __contains__(self, item):
         return item in self._variables
@@ -348,6 +374,8 @@ class Model:
         if key in self._variables:
             copy = self.copy()
             del copy._variables[key]
+            if key in copy._variables_log_probs:
+                del copy._variables_log_probs[key]
         else:
             copy = self
         return copy
@@ -433,6 +461,11 @@ type {function['name']} = (_: {{"""
             delayed_bytes = b""
             # last_is_generated = False
             for new_bytes, is_generated, new_bytes_prob, capture_groups, capture_group_log_probs, new_token_count in gen_obj:
+
+                # we make everything full probability if we are not computing uncertainty
+                if not lm.compute_log_probs:
+                    new_bytes_prob = 1.0
+                
                 # convert the bytes to a string (delaying if we don't yet have a valid unicode string)
                 lm.token_count += new_token_count
                 new_bytes = delayed_bytes + new_bytes
@@ -495,7 +528,7 @@ type {function['name']} = (_: {{"""
 
         return lm
     
-    def _get_logits(self, token_ids, forced_bytes):
+    def _get_logits(self, token_ids, forced_bytes, current_temp):
         '''A fake method designed to be overriden by subclasses.'''
 
         # pretend to extend the KV cache and update the log probs
@@ -568,6 +601,11 @@ type {function['name']} = (_: {{"""
             for i,id in enumerate(joint_token_ids):
                 pos += len(self.tokens[id])
                 token_byte_positions.append(pos)
+            
+            # ugly hack to deal with sentence peice craziness of space hiding after special tokens TODO: figure out how to make this more robust
+            if token_byte_positions[-1] == last_pos + 1 and self.tokens[token_ids[0]] == b'<s>' and self.tokens[token_ids[1]][0:1] == b' ':
+                for i in range(1, len(token_byte_positions)):
+                    token_byte_positions[i] -= 1
             assert token_byte_positions[-1] == last_pos
         
         return token_ids, token_byte_positions
@@ -578,7 +616,15 @@ type {function['name']} = (_: {{"""
             probs[j] += probs[i]
             probs[i] = 0
 
+    def _report_failed_match(self):
+        """Note that this can be overridden by subclasses that have more likely reasons than a bug in the token set (like remote models)."""
+        return Exception("We can't consume any more tokens, but we are not yet done! Perhaps your model's token set is incomplete?")
+
     def __call__(self, grammar, max_tokens=1000000, n=1, top_p=1, temperature=0.0, ensure_bos_token=True):
+        import time
+        start = time.time()
+        time_table = {}
+        
         assert n == 1, "Still need to add support for n > 1!"
         
         # get our current context in bytes
@@ -591,6 +637,7 @@ type {function['name']} = (_: {{"""
         
         # run a simple tokenizer (that does not use a grammar) on the prefix for better performance
         token_ids,token_byte_positions = self._tokenize_prefix(prompt)
+        # import ipdb; ipdb.set_trace()
         token_ids,token_byte_positions = self._cleanup_tokens(token_ids,token_byte_positions)
         if len(token_byte_positions) > 0:
             pre_parser_bytes = token_byte_positions[-1]
@@ -599,8 +646,6 @@ type {function['name']} = (_: {{"""
         else:
             trimmed_prompt_prefix = b''
             pre_parser_bytes = 0
-        
-        # create a parser with a grammar that includes both our context and the passed grammar
         parser = EarleyCommitParser(prompt + grammar)
 
         # loop until we have generated a complete pattern
@@ -610,8 +655,12 @@ type {function['name']} = (_: {{"""
         token_count = 0
         last_token_count = 0
         was_forced = False
+        is_generated = False
         captured_data = {}
         captured_log_prob_data = {}
+        time_table["init"] = time.time() - start
+        time_table["token_gen"] = 0
+        time_table["logits"] = 0
         while True: # each iteration generates one more token (and some of the associated bytes)
 
             # enforce the token limit
@@ -700,6 +749,7 @@ type {function['name']} = (_: {{"""
             forced_pos = parser.pos # record how far the bytes are forced
 
             if retry_token_gen:
+                time_table["token_gen"] = time.time() - start
                 continue
 
             # back up if we got forced up to a point that is not a valid token
@@ -735,35 +785,31 @@ type {function['name']} = (_: {{"""
                 if was_forced:
                     token_ids,token_byte_positions = self._cleanup_tokens(token_ids, token_byte_positions)
                     was_forced = False
-                logits = self._get_logits(token_ids, parser.bytes[start_pos:forced_pos])
+                grammar_temp = parser.next_byte_temperature()
+                current_temp = grammar_temp if grammar_temp >= 0 else temperature # we prefer to use the grammar temp when it is specified
+                logits = self._get_logits(token_ids, parser.bytes[start_pos:forced_pos], current_temp)
+                is_generated = True
 
                 # if requested we compute the log probabilities so we can track the probabilities of each node
                 if self.compute_log_probs:
                     if torch:
-                        probs_torch = torch.nn.functional.softmax(torch.tensor(logits).float(), dim=-1)
-                        probs = probs_torch.cpu().numpy() # note we don't adjust for temp since we consider that a sampling step, not part of the probs
+                        probs = torch.nn.functional.softmax(torch.tensor(logits), dim=-1).cpu().numpy() # note we don't adjust for temp since we consider that a sampling step, not part of the probs
                     else:
                         probs = softmax(logits, axis=-1) # this numpy code is slower, so we don't use it if we have torch...
                     self._clean_duplicate_tokens(probs)
                     trie.compute_probs(probs) # C++ impl
                 else:
-                    probs_torch = None
                     probs = None
 
                 # get the sampling order
-                grammar_temp = parser.next_byte_temperature()
-                current_temp = grammar_temp if grammar_temp >= 0 else temperature # we prefer to use the grammar temp when it is specified
-                logits = logits[:len(self.tokens)] # we only need the logits for the tokens, not the bytes
-                # import ipdb; ipdb.set_trace()
                 if current_temp == 0:
                     sampling_order = np.argsort(-logits) # we need numpy so the enumerate below does not get really slow...
                 else:
                     assert top_p == 1, "Still need to add support for top_p!"
                     if torch:
-                        if probs_torch is None:
-                            logits = torch.tensor(logits)
-                            torch.div(logits, current_temp, out=logits)
-                            probs_torch = torch.nn.functional.softmax(logits, dim=-1)
+                        logits = torch.tensor(logits)
+                        torch.div(logits, current_temp, out=logits)
+                        probs_torch = torch.nn.functional.softmax(logits, dim=-1)
                         sampling_order = torch.multinomial(probs_torch, len(probs_torch)).cpu().numpy()
                     else:
                         # this numpy version allows us to drop our dependence on pytorch...but it is way slower
@@ -775,16 +821,21 @@ type {function['name']} = (_: {{"""
 
                 # loop over the tokens looking for a valid one
                 for i,sampled_token_ind in enumerate(sampling_order):
+
                     sampled_token = self.tokens[sampled_token_ind]
 
                     # make sure the parse is backed up to the position we want to start checking from TODO: make this account for shared prefixes with the last token
                     parser.pos = forced_pos
                     new_bytes_prob = 1.0
 
+                    # if we have gotten to the end of the valid tokens then we stop
+                    # if logits[sampled_token_ind] == -np.inf:
+                    #     raise self._report_failed_match(trimmed_prompt_prefix + parser.bytes)
+
                     # make sure it matches any forced prefix
                     if start_pos < forced_pos and not sampled_token.startswith(parser.bytes[start_pos:forced_pos]):
                         continue
-                    offset = forced_pos - start_pos
+                    offset = forced_pos - start_pos # this is the offset into the sampled token we are at
 
                     # check to see if the sampled token is allowed
                     token_pos = offset
@@ -871,6 +922,8 @@ type {function['name']} = (_: {{"""
                     #         token_pos = -1
 
                     if token_pos > 0:
+                        # The valid token is longer than the forced prefix, so we accept it
+                        valid_token_str = sampled_token[:token_pos]
                         break # we found a valid token
 
                     if parser.matched():
@@ -885,8 +938,11 @@ type {function['name']} = (_: {{"""
 
             # if we cannot consume any more tokens then we are done
             if not is_forced and token_pos < len(sampled_token) and trie == self._token_trie:
-                assert parser.matched(), "We can't consume any more tokens, but we are not yet done! Perhaps your model's token set is incomplete?"
 
+                # which if can't consume any more tokens, but we are not yet done
+                if not parser.matched():
+                    raise self._report_failed_match(trimmed_prompt_prefix + parser.bytes)
+                
                 # TODO: if we exactly match the end of the pattern then we can commit to this last token 
                 # if m.span()[1] == len(generated_text):
                 #     self._cache_state["new_token_ids"].append(sampled_token_ind)
@@ -896,7 +952,7 @@ type {function['name']} = (_: {{"""
                 _record_captures(parse_tree, captured_data, captured_log_prob_data, parser.bytes)
                 
                 # we have no valid log prob data if we didn't compute it
-                yield new_bytes[hidden_count:], not is_forced, new_bytes_prob, captured_data, captured_log_prob_data, token_count - last_token_count
+                yield new_bytes[hidden_count:], is_generated, new_bytes_prob, captured_data, captured_log_prob_data, token_count - last_token_count
                 last_token_count = token_count
                 break # we are done!
             else:
@@ -905,7 +961,7 @@ type {function['name']} = (_: {{"""
                 # yeild the snippet of text created by the next token
                 out = new_bytes[hidden_count:]
                 if len(out) > 0:
-                    yield out, not is_forced, new_bytes_prob, {}, {}, token_count - last_token_count # note that we don't capture groups until a complete parse right now...
+                    yield out, is_generated, new_bytes_prob, {}, {}, token_count - last_token_count # note that we don't capture groups until a complete parse right now...
                     last_token_count = token_count
                     hidden_count = 0
                     token_count += 1 # note we only update this for tokens that emit non-hidden content
@@ -920,6 +976,7 @@ type {function['name']} = (_: {{"""
                 else:
                     token_byte_positions.append(token_byte_positions[-1] + len(sampled_token))
 
+            time_table["token_emit"] = time.time() - start
 class Chat(Model):
     '''The base class for all chat-tuned models.'''
     
@@ -981,6 +1038,9 @@ class ThrottleRefresh:
 def throttle_refresh():
     '''Returns a context manager that allows the print statement to drop display calls above the throttle rate.'''
     return ThrottleRefresh()
+
+class ConstraintException(Exception):
+    pass
 
 def _record_captures(initial_item, data, log_prob_data, byte_data):
     stack = [(initial_item, 0)]

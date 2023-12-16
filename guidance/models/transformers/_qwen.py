@@ -32,7 +32,7 @@ class Qwen(Transformers):
             **kwargs,
         )
 
-    def _get_logits(self, token_ids, forced_bytes):
+    def _get_logits(self, token_ids, forced_bytes, current_temp):
         """Computes the logits for the given token state.
 
         This overrides a method from the LocalEngine class that is used to get
@@ -41,8 +41,8 @@ class Qwen(Transformers):
         """
         # make sure we don't run off the end of the model
         
-        _x = self._orig_tokenizer.decode(token_ids)
-        
+        # _x = self._orig_tokenizer.decode(token_ids)
+        # token_ids = self._orig_tokenizer(_x).input_ids
         if len(token_ids) >= getattr(
             self.model_obj.config, "max_position_embeddings", 1e10
         ):
@@ -80,7 +80,7 @@ class Qwen(Transformers):
         cache_token_ids[past_length:] = []
 
         # call the model
-        new_token_ids = token_ids[past_length:]
+        new_token_ids = token_ids[past_length:] # new here is the token ids that are not cached
         if len(new_token_ids) > 0:
             with torch.no_grad():
                 model_out = self.model_obj(
@@ -103,13 +103,13 @@ class Qwen(Transformers):
             # save the results
             self._cache_state["past_key_values"] = model_out.past_key_values
             cache_token_ids.extend(new_token_ids)
-            logits = model_out.logits[0, -1, :].cpu().float().softmax(-1)
-            score, token_id = logits.topk(1)
-            self.generated_logits.append([score, token_id])
-
+            logits = model_out.logits[0, -1, :].cpu().float()
+            # score, token_id = logits.topk(1)
+            # self.generated_logits.append([score, token_id])
             self._cache_state["logits"] = logits.numpy()
-
         ret = self._cache_state["logits"]
+        
+        
         assert ret is not None, "Something went wrong with the cache!"
         return ret
 
