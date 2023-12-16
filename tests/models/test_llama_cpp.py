@@ -36,7 +36,7 @@ def test_repeat_calls():
     a = []
     lm = llama2 + 'How much is 2 + 2? ' + gen(name='test', max_tokens=10)
     a.append(lm['test'])
-    lm = llama2 + 'How much is 2 + 2? ' + gen(name='test',max_tokens=10, pattern=r'\d+')
+    lm = llama2 + 'How much is 2 + 2? ' + gen(name='test',max_tokens=10, regex=r'\d+')
     a.append(lm['test'])
     lm = llama2 + 'How much is 2 + 2? ' + gen(name='test', max_tokens=10)
     a.append(lm['test'])
@@ -96,3 +96,8 @@ def test_llama_with_temp():
         lm += f"LINE {i+1}: " + gen(temperature=0.8, suffix="\n")
     # we just want to make sure we don't crash the numpy sampler
 
+def test_llama_with_temp2():
+    lm = get_model("llama_cpp:")
+    lm1 = lm + '2 + 2 =' + gen('answer', max_tokens=3)
+    lm2 = lm + '2 + 2 =' + gen('answer', temperature=0.0000001, max_tokens=3)
+    assert lm1["answer"] == lm2["answer"]

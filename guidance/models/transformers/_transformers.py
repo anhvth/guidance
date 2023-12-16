@@ -47,8 +47,15 @@ class Transformers(Model):
         else:
             byte_tokens = []
             for i in range(len(tkz)):
-                tok = bytes(tkz.convert_tokens_to_string(['a', tkz.convert_ids_to_tokens(i)])[1:], encoding="utf8") 
-                byte_tokens.append(tok)
+                s = tkz.convert_tokens_to_string(['a', tkz.convert_ids_to_tokens(i)])
+                if s[0] == 'a':
+                    s = s[1:]
+                elif s[1] == 'a':
+                    s = s[2:]
+                else:
+                    raise Exception("Can't determine tokenstring representation!")
+                byte_tokens.append(bytes(s, encoding="utf8"))
+
         # the superclass does most of the work once we have the tokens
         super().__init__(
             byte_tokens,
@@ -61,6 +68,9 @@ class Transformers(Model):
         self._cache_state["past_key_values"] = None
         self._cache_state["logits"] = None
         self._cache_state["cache_token_ids"] = []
+
+    def _joint_tokenize(self, token_ids):
+        return self._orig_tokenizer(self._orig_tokenizer.decode(token_ids), add_special_tokens=False)["input_ids"]
 
     def _model_and_tokenizer(self, model, tokenizer, **kwargs):
 
@@ -76,6 +86,12 @@ class Transformers(Model):
             if tokenizer is None:
                 try:
                     tokenizer = transformers.AutoTokenizer.from_pretrained(model, use_fast=False, **kwargs)
+                    # This is here because some tokenizers are bad and don't have all the bytes (I'm looking at you, microsoft/phi2)
+                    if hasattr(tokenizer, "byte_decoder"):
+                        all_bytes = set()
+                        for x in tokenizer.get_vocab().keys():
+                            [all_bytes.add(y) for y in x]
+                        assert set(tokenizer.byte_decoder.keys()).intersection(all_bytes) == all_bytes
                 except:
                     tokenizer = transformers.AutoTokenizer.from_pretrained(model, use_fast=True, **kwargs) # fall back to the fast tokenizer
             model = transformers.AutoModelForCausalLM.from_pretrained(model, **kwargs)
@@ -84,7 +100,7 @@ class Transformers(Model):
             
         return model, tokenizer
 
-    def _get_logits(self, token_ids, forced_bytes):
+    def _get_logits(self, token_ids, forced_bytes, current_temp):
         '''Computes the logits for the given token state.
         
         This overrides a method from the LocalEngine class that is used to get
@@ -129,7 +145,7 @@ class Transformers(Model):
             # save the results
             self._cache_state["past_key_values"] = model_out.past_key_values
             cache_token_ids.extend(new_token_ids)
-            self._cache_state["logits"] = model_out.logits[0, -1, :].float().cpu().numpy()
+            self._cache_state["logits"] = model_out.logits[0, -1, :].cpu().numpy()
         
         return self._cache_state["logits"]
     

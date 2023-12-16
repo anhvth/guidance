@@ -1,10 +1,9 @@
-from openai import chat
 import torch
 from ._transformers import Transformers
 from ._transformers import TransformersChat
 from loguru import logger
 
-
+import time
 class Qwen(Transformers):
     def __init__(
         self,
@@ -31,18 +30,16 @@ class Qwen(Transformers):
             device=device,
             **kwargs,
         )
+        self.time_table = {}
 
-    def _get_logits(self, token_ids, forced_bytes, current_temp):
+    def _get_logits(self, token_ids, forced_bytes, current_temp, **kwargs):
         """Computes the logits for the given token state.
 
         This overrides a method from the LocalEngine class that is used to get
         inference results from the model.
-        forced_bytes is a list of bytes objects that will be forced to appear
         """
+        start = time.time()
         # make sure we don't run off the end of the model
-        
-        # _x = self._orig_tokenizer.decode(token_ids)
-        # token_ids = self._orig_tokenizer(_x).input_ids
         if len(token_ids) >= getattr(
             self.model_obj.config, "max_position_embeddings", 1e10
         ):
@@ -52,7 +49,6 @@ class Qwen(Transformers):
 
         # get the number of cache positions we are using
         cache_token_ids = self._cache_state["cache_token_ids"]
-        
         num_cached = 0
         for id in cache_token_ids:
             if (
@@ -68,9 +64,7 @@ class Qwen(Transformers):
         past_length = (
             past_key_values[0][0].size(1) if past_key_values is not None else 0
         )
-        # import ipdb; ipdb.set_trace()
         if past_length > num_cached:
-            self.generated_logits = []
             past_length = max(
                 0, num_cached - 1
             )  # note we recompute the last token because we don't bother to handle the special case of just computing logits
@@ -80,7 +74,7 @@ class Qwen(Transformers):
         cache_token_ids[past_length:] = []
 
         # call the model
-        new_token_ids = token_ids[past_length:] # new here is the token ids that are not cached
+        new_token_ids = token_ids[past_length:]
         if len(new_token_ids) > 0:
             with torch.no_grad():
                 model_out = self.model_obj(
@@ -103,20 +97,20 @@ class Qwen(Transformers):
             # save the results
             self._cache_state["past_key_values"] = model_out.past_key_values
             cache_token_ids.extend(new_token_ids)
-            logits = model_out.logits[0, -1, :].cpu().float()
-            # score, token_id = logits.topk(1)
-            # self.generated_logits.append([score, token_id])
-            self._cache_state["logits"] = logits.numpy()
-        ret = self._cache_state["logits"]
-        
-        
-        assert ret is not None, "Something went wrong with the cache!"
-        return ret
+            self._cache_state["logits"] = (
+                model_out.logits[0, -1, :].float().cpu().numpy()
+            )
+            
+            max_token = self._cache_state["logits"].argmax()
+            token = self.tokens[max_token]
+            self.time_table[token] = time.time() - start
 
-    def _tokenize_prefix(self, prompt):
-        if isinstance(prompt, bytes):
-            prompt = prompt.decode("utf-8")
-        return self._orig_tokenizer(prompt).input_ids, []
+        return self._cache_state["logits"]
+
+    # def _tokenize_prefix(self, prompt):
+    #     if isinstance(prompt, bytes):
+    #         prompt = prompt.decode("utf-8")
+    #     return self._orig_tokenizer(prompt).input_ids, []
 
 
 class QwenChat(Qwen, TransformersChat):

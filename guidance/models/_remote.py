@@ -5,7 +5,7 @@ import time
 import tiktoken
 import re
 import logging
-from ._model import Model, format_pattern
+from ._model import Model, format_pattern, ConstraintException
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +123,10 @@ class Remote(Model):
         self._shared_state["not_running_stream"].set()
         dqueue.put(b'') # so we never get stuck waiting for a running stream to return something
 
-    def _start_new_stream(self, prompt):
+    def _start_new_stream(self, prompt, temperature):
+
+        # make sure the display is up to date (since we are about to delay for a while)
+        self._update_display(throttle=False)
 
         if self._shared_state["num_calls_made"] > self.max_repeated_calls:
             raise Exception(f"We have exceeded the maximum number of repeat calls ({self.max_repeated_calls}) per grammar execution!")
@@ -138,15 +141,23 @@ class Remote(Model):
             self._shared_state["data_queue"].get()
 
         # start the new stream
+        self._shared_state["used_bytes_len"] = 0
+        self._shared_state["current_temp"] = temperature
         self._shared_state["last_call"] = time.time()
-        generator = self._generator(prompt)
+        generator = self._generator(prompt, temperature)
         self._shared_state["not_running_stream"].clear() # so we know we are running
         self._shared_state["num_calls_made"] += 1
-        self._shared_state["data"] = prompt # we reset out current data state to be this prompt
         self._shared_state["remote_thread"] = threading.Thread(target=self._start_generator_stream, args=(generator,))
         self._shared_state["remote_thread"].start()
+
+    def _reset_shared_data(self, new_data, temperature):
+        """Should be called by _generator calls to reset the shared data state."""
+        if temperature == 0 and self._shared_state.get("last_stream_start", None) == new_data:
+            raise self._report_failed_match(new_data)
+        self._shared_state["data"] = new_data
+        self._shared_state["last_stream_start"] = self._shared_state["data"]
     
-    def _get_logits(self, token_ids, forced_bytes):
+    def _get_logits(self, token_ids, forced_bytes, current_temp):
         '''Computes the logits for the given token state.
         
         This overrides a method from the Local class that is used to get
@@ -159,34 +170,60 @@ class Remote(Model):
             raise ValueError("token_ids must contain some tokens.")
         
         # compute the prompt bytes
-        prompt = b''.join([self.tokens[i] for i in token_ids]) + forced_bytes
+        whole_token_prompt = b''.join([self.tokens[i] for i in token_ids])
+        prompt = whole_token_prompt + forced_bytes
 
         self._shared_state["last_call"] = time.time()
 
         # keep looping until we have at least one more byte past our prompt
         token_id = None
+        restarted = False # track if we have restarted the data stream during this call
         while True:
 
+            # if the generation temperature changes we have to restart
+            if self._shared_state.get("current_temp", None) != current_temp:
+                self._start_new_stream(prompt, current_temp)
+                continue
+
             # try and get the next token id
-            if self._shared_state["data"].startswith(prompt):
+            elif self._shared_state["data"].startswith(prompt):
                 token_id = self._get_next_token(len(prompt)-len(forced_bytes))
                 if token_id is not None:
-                    break
+                    
+                    # if we have a non-zero sampling temperature we can't reuse bytes
+                    new_used_len = len(whole_token_prompt) + len(self.tokens[token_id])
+                    if current_temp > 0 and self._shared_state["used_bytes_len"] >= new_used_len:
+                        token_id = None
+                        self._start_new_stream(prompt, current_temp)
+                        continue
+                    
+                    # ...otherwise we have found the token id we want to emit
+                    else:
+                        self._shared_state["used_bytes_len"] = len(whole_token_prompt) + len(self.tokens[token_id])
+                        break
 
             # restart if extending our data will never lead to matching our prompt
             elif not self._shared_state["data"].startswith(prompt) and len(self._shared_state["data"]) >= len(prompt): #not prompt.startswith(self._shared_state["data"]): # len(self._shared_state["data"]) >= len(prompt) or 
 
+                # check if we have already restarted once and so retrying by default is not likely to be helpful
+                if restarted:
+                    raise self._report_failed_match(prompt)
+
                 # check the length of the prefix match
                 match_len = 0
+                found_mismatch = False
                 data = self._shared_state["data"]
                 for match_len,v in enumerate(prompt):
                     if v != data[match_len]:
+                        found_mismatch = True
                         break
+                if not found_mismatch:
+                    match_len = len(prompt)
                 leftover = prompt[match_len:]
 
                 # record any active non-empty role ends. Ignore role ends that are spaces
                 parts = []
-                for role_end_str in self.opened_blocks.values():
+                for _,role_end_str in self.opened_blocks.values():
                     role_end_str = format_pattern.sub("", role_end_str)
                     if len(role_end_str) > 0 and not re.fullmatch(r'\s+', role_end_str):
                         parts.append(role_end_str.encode("utf8"))
@@ -206,7 +243,8 @@ class Remote(Model):
                     continue # start our loop over again
 
                 logger.debug(f'restarting a stream because the data we have does not match the ids. We have {str(self._shared_state["data"])} but the prompt is {str(prompt)}')
-                self._start_new_stream(prompt)
+                restarted = True
+                self._start_new_stream(prompt, current_temp)
 
             # extend our data with a chunk from the model stream
             if not self._shared_state["data_queue"].empty():
@@ -224,7 +262,8 @@ class Remote(Model):
             # but if there is nothing and we are not running then we start a stream
             elif self._shared_state["not_running_stream"].is_set():
                 logger.debug("starting a new stream because there is no data to read and no stream running...")
-                self._start_new_stream(prompt)
+                restarted = True
+                self._start_new_stream(prompt, current_temp)
 
             # we wait for the running stream to put something in the queue
             else:
@@ -246,6 +285,45 @@ class Remote(Model):
         logits[token_id] = 100
         
         return logits
+    
+    def _report_failed_match(self, prompt):
+
+        # check the length of the prefix match
+        match_len = 0
+        found_mismatch = False
+        data = self._shared_state["data"]
+        for match_len,v in enumerate(prompt):
+            if v != data[match_len]:
+                found_mismatch = True
+                break
+        if not found_mismatch:
+            match_len = len(prompt)
+        leftover = prompt[match_len:]
+
+        # compute the mismatch parts
+        data_after_prompt = self._shared_state["data"][match_len:]
+        if len(data_after_prompt) > 40:
+            data_after_prompt = data_after_prompt[:40] + b"..."
+        prompt_tail = prompt[:match_len]
+        if len(prompt_tail) > 40:
+            prompt_tail = b"..." + prompt_tail[-40:]
+
+        # show in the model output where and how we diverged from the grammar
+        try:
+            # just for display when echo is on
+            already_shown = len(self._current_prompt().encode())
+            self += self._shared_state["data"][already_shown:match_len].decode() + f"<||_html:<span style='color: rgba(165,0,0,1);' title='{leftover}'><span style='text-decoration: underline;'>{data_after_prompt.decode()}</span></span>_||>"
+        except:
+            pass # could not decode the data the model generated into a string...
+        
+        # create an exception for users to deal with (that our caller can throw)
+        return ConstraintException(
+            f"The model attempted to generate {str(data_after_prompt)} after the prompt `{prompt_tail}`, but that does\n" +
+            "not match the given grammar constraints! Since your model is a remote API that does not support full guidance\n" +
+            "integration we cannot force the model to follow the grammar, only flag an error when it fails to match.\n" +
+            "You can try to address this by improving the prompt, making your grammar more flexible, rerunning with\n" +
+            "a non-zero temperature, or using a model that supports full guidance grammar constraints."
+        )
     
     def _get_next_token(self, pos, allow_early_stop=False):
         data = self._shared_state["data"]

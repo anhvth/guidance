@@ -621,10 +621,6 @@ type {function['name']} = (_: {{"""
         return Exception("We can't consume any more tokens, but we are not yet done! Perhaps your model's token set is incomplete?")
 
     def __call__(self, grammar, max_tokens=1000000, n=1, top_p=1, temperature=0.0, ensure_bos_token=True):
-        import time
-        start = time.time()
-        time_table = {}
-        
         assert n == 1, "Still need to add support for n > 1!"
         
         # get our current context in bytes
@@ -637,7 +633,6 @@ type {function['name']} = (_: {{"""
         
         # run a simple tokenizer (that does not use a grammar) on the prefix for better performance
         token_ids,token_byte_positions = self._tokenize_prefix(prompt)
-        # import ipdb; ipdb.set_trace()
         token_ids,token_byte_positions = self._cleanup_tokens(token_ids,token_byte_positions)
         if len(token_byte_positions) > 0:
             pre_parser_bytes = token_byte_positions[-1]
@@ -646,6 +641,8 @@ type {function['name']} = (_: {{"""
         else:
             trimmed_prompt_prefix = b''
             pre_parser_bytes = 0
+        
+        # create a parser with a grammar that includes both our context and the passed grammar
         parser = EarleyCommitParser(prompt + grammar)
 
         # loop until we have generated a complete pattern
@@ -658,9 +655,6 @@ type {function['name']} = (_: {{"""
         is_generated = False
         captured_data = {}
         captured_log_prob_data = {}
-        time_table["init"] = time.time() - start
-        time_table["token_gen"] = 0
-        time_table["logits"] = 0
         while True: # each iteration generates one more token (and some of the associated bytes)
 
             # enforce the token limit
@@ -749,7 +743,6 @@ type {function['name']} = (_: {{"""
             forced_pos = parser.pos # record how far the bytes are forced
 
             if retry_token_gen:
-                time_table["token_gen"] = time.time() - start
                 continue
 
             # back up if we got forced up to a point that is not a valid token
@@ -821,7 +814,6 @@ type {function['name']} = (_: {{"""
 
                 # loop over the tokens looking for a valid one
                 for i,sampled_token_ind in enumerate(sampling_order):
-
                     sampled_token = self.tokens[sampled_token_ind]
 
                     # make sure the parse is backed up to the position we want to start checking from TODO: make this account for shared prefixes with the last token
@@ -835,7 +827,7 @@ type {function['name']} = (_: {{"""
                     # make sure it matches any forced prefix
                     if start_pos < forced_pos and not sampled_token.startswith(parser.bytes[start_pos:forced_pos]):
                         continue
-                    offset = forced_pos - start_pos # this is the offset into the sampled token we are at
+                    offset = forced_pos - start_pos
 
                     # check to see if the sampled token is allowed
                     token_pos = offset
@@ -922,8 +914,6 @@ type {function['name']} = (_: {{"""
                     #         token_pos = -1
 
                     if token_pos > 0:
-                        # The valid token is longer than the forced prefix, so we accept it
-                        valid_token_str = sampled_token[:token_pos]
                         break # we found a valid token
 
                     if parser.matched():
@@ -976,7 +966,6 @@ type {function['name']} = (_: {{"""
                 else:
                     token_byte_positions.append(token_byte_positions[-1] + len(sampled_token))
 
-            time_table["token_emit"] = time.time() - start
 class Chat(Model):
     '''The base class for all chat-tuned models.'''
     
