@@ -1,7 +1,7 @@
 import torch
 from tqdm import tqdm
 from ._transformers import Transformers
-from ._transformers import TransformersChat
+from .._model import Model, Chat
 from loguru import logger
 
 import time
@@ -155,6 +155,7 @@ class Qwen(Transformers):
             if len(posible_end_tokens):
                 return token_ids[: -1], bytes_position[: -1]
         return token_ids, bytes_position
-    
-class QwenChat(Qwen):
+
+
+class QwenChat(Qwen, Chat):
     pass
