@@ -1,10 +1,35 @@
 import torch
 from tqdm import tqdm
+
+import guidance
 from ._transformers import Transformers
 from .._model import Model, Chat
 from loguru import logger
 
 import time
+
+
+# @guidance(stateless=False)
+# def _role(lm, role, f):
+#     lm += f"<|im_start|>{role}\n"
+#     lm = lm + f
+#     lm += "<|im_end|>\n"
+#     return lm
+
+
+# @guidance(stateless=True)
+# def user(lm, f):
+#     return lm + _role("user", f)
+
+
+# @guidance(stateless=True)
+# def assistant(lm, f):
+#     return lm + _role("assistant", f)
+
+
+# @guidance(stateless=True)
+# def system(lm, f):
+#     return lm + _role("system", f)
 
 
 class Qwen(Transformers):
@@ -49,7 +74,7 @@ class Qwen(Transformers):
         """
         # make sure we don't run off the end of the model
 
-        _text = self.decode(token_ids)
+        # _text = self.decode(token_ids)
         # new_token_ids = self.encode(_text)
         # assert len(new_token_ids) == len(token_ids)
 
@@ -61,7 +86,6 @@ class Qwen(Transformers):
             )
 
         # get the number of cache positions we are using
-        # import ipdb; ipdb.set_trace()
         cache_token_ids = self._cache_state["cache_token_ids"]
         num_cached = 0
         for id in cache_token_ids:
@@ -90,8 +114,8 @@ class Qwen(Transformers):
         # call the model
         new_token_ids = token_ids[past_length:]
         # print('Past length', past_length, 'new length', len(new_token_ids))
-        if len(new_token_ids)==0:
-            import ipdb; ipdb.set_trace()
+        # if len(new_token_ids)==0:
+
         if len(new_token_ids) > 0:
             with torch.no_grad():
                 model_out = self.model_obj(
@@ -116,14 +140,13 @@ class Qwen(Transformers):
             cache_token_ids.extend(new_token_ids)
             logits = model_out.logits[0, -1, :].float()
             # if self.compute_log_probs:
-                # logits = logits.softmax(-1)
+            logits = logits.softmax(-1)
             self._cache_state["logits"] = logits.cpu().numpy()
             scores, ids = model_out.logits[0, -1, :].softmax(-1).topk(2)
             topk = {}
             for i in range(len(ids)):
                 topk[self.decode([ids[i].item()])] = scores[i].item()
             # print("topk", topk)
-            # import ipdb;ipdb.set_trace()  # pred_token = self.decode(x[1])
 
         return self._cache_state["logits"]
 
@@ -135,8 +158,8 @@ class Qwen(Transformers):
         # if '>assistant' in string:
         #     last_idx_of_assistant = string.rfind('>assistant')
         #     prefix = string[:last_idx_of_assistant]
-            # prefix, assistant_prefix = string.split('>assistant')
-            
+        # prefix, assistant_prefix = string.split('>assistant')
+
         token_ids = self.encode(string)
         bytes_position = []
 
@@ -145,17 +168,32 @@ class Qwen(Transformers):
             _s = self.decode(_ids)
             _bytes = bytes(_s, encoding="utf8")
             bytes_position.append(len(_bytes))
-            
+
         posible_end_tokens = []
         if len(bytes_position):
-            last_byte = _bytes[bytes_position[-2]:]
+            last_byte = _bytes[bytes_position[-2] :]
+            if last_byte == b"\n":
+                return token_ids, bytes_position
+
             for token in self.tokens:
                 if token.startswith(last_byte):
                     posible_end_tokens.append(token)
             if len(posible_end_tokens):
-                return token_ids[: -1], bytes_position[: -1]
+                return token_ids[:-1], bytes_position[:-1]
         return token_ids, bytes_position
 
 
 class QwenChat(Qwen, Chat):
-    pass
+    def get_role_end(self, role_name=None):
+        """The ending bytes for a role.
+
+        Note that we cannot use a grammar in closers because they need to remain constant
+        so we can append them whenever we need a representation before the final closing of the context.
+        By default we follow the GPT role tag end conventions.
+
+        Parameters
+        ----------
+        role_name : str
+            The name of the role, like "user", or "assistant"
+        """
+        return "<|im_end|>\n"

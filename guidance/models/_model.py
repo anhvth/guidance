@@ -33,6 +33,8 @@ nodisp_pattern = re.compile(r"&lt;\|\|_#NODISP_\|\|&gt;.*?&lt;\|\|_/NODISP_\|\|&
 html_pattern = re.compile(r"&lt;\|\|_html:(.*?)_\|\|&gt;", flags=re.DOTALL)
 image_pattern = re.compile(r"&lt;\|_image:(.*?)\|&gt;")
 
+from ..library._block import OPEN_BLOCKS
+    
 class Model:
     '''A guidance model object, which represents a sequence model in a given state.
     
@@ -41,7 +43,7 @@ class Model:
     parts of the model like the the parameters and KV-cache, so making copies is cheap.
     '''
 
-    open_blocks = {} # track what context blocks are open
+    # open_blocks = {} # track what context blocks are open
     _grammar_only = 0 # a flag that tracks when we are forced to be executing only compiled grammars (like when we are inside a select)
     _throttle_refresh = 0 # a flag that tracks when we can throttle our display since we know future display calls are going to happen
 
@@ -234,10 +236,11 @@ class Model:
 
         # inside this context we are free to drop display calls that come too close together
         with throttle_refresh():
-
+            # from guidance.models._model import OpenBlock
             # close any newly closed contexts
             for context in list(reversed(lm.opened_blocks)):
-                if context not in Model.open_blocks and context in lm.opened_blocks:
+                # context cannot be in Model.open_blocks because we are in a copy
+                if context not in OPEN_BLOCKS and context in lm.opened_blocks:
                     pos, close_text = lm.opened_blocks[context] # save so we can delete it before adding it
                     if context.name is not None:
                         lm._variables[context.name] = format_pattern.sub("", lm._state[pos:])
@@ -245,7 +248,9 @@ class Model:
                     lm._inplace_append(close_text)
 
             # apply any newly opened contexts (new from this object's perspective)
-            for context in Model.open_blocks:
+            # import ipdb; ipdb.set_trace()
+            
+            for context in OPEN_BLOCKS:
                 if context not in lm.opened_blocks:
                     lm.opened_blocks[context] = (0, "") # mark this so we don't readd when computing the opener (even though we don't know the close text yet)
                     lm += context.opener
@@ -786,7 +791,12 @@ type {function['name']} = (_: {{"""
                 # if requested we compute the log probabilities so we can track the probabilities of each node
                 if self.compute_log_probs:
                     if torch:
-                        probs = torch.nn.functional.softmax(torch.tensor(logits), dim=-1).cpu().numpy() # note we don't adjust for temp since we consider that a sampling step, not part of the probs
+                        # check if the sum of logits close to 1
+                        if abs(np.sum(logits) - 1) > 1e-3:
+                            logger.warning(f"Logits sum to {np.sum(logits)} instead of 1.0!")
+                            probs = torch.nn.functional.softmax(torch.tensor(logits), dim=-1).cpu().numpy() # note we don't adjust for temp since we consider that a sampling step, not part of the probs
+                        else:
+                            probs = torch.tensor(logits).cpu().numpy()
                     else:
                         probs = softmax(logits, axis=-1) # this numpy code is slower, so we don't use it if we have torch...
                     self._clean_duplicate_tokens(probs)
