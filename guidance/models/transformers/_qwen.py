@@ -122,7 +122,7 @@ class Qwen(Transformers):
                 model_out = self.model_obj(
                     input_ids=torch.tensor(new_token_ids).unsqueeze(0).to(self.device),
                     past_key_values=self._cache_state["past_key_values"],
-                    use_cache=False,
+                    use_cache=True,
                     position_ids=torch.arange(
                         past_length, past_length + len(new_token_ids)
                     )
