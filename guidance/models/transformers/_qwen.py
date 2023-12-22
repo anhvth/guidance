@@ -5,7 +5,7 @@ import guidance
 from ._transformers import Transformers
 from .._model import Model, Chat
 from loguru import logger
-
+from functools import lru_cache
 import time
 
 
@@ -78,7 +78,7 @@ class Qwen(Transformers):
         # _text = self.decode(token_ids)
         # new_token_ids = self.encode(_text)
         # assert len(new_token_ids) == len(token_ids)
-
+        # import ipdb; ipdb.set_trace()
         if len(token_ids) >= getattr(
             self.model_obj.config, "max_position_embeddings", 1e10
         ):
@@ -116,6 +116,7 @@ class Qwen(Transformers):
         new_token_ids = token_ids[past_length:]
         # print('Past length', past_length, 'new length', len(new_token_ids))
         # if len(new_token_ids)==0:
+        # import ipdb; ipdb.set_trace()
 
         if len(new_token_ids) > 0:
             with torch.no_grad():
@@ -154,22 +155,25 @@ class Qwen(Transformers):
     def _cleanup_tokens(self, token_ids, token_byte_positions):
         return token_ids, token_byte_positions
 
+
+
+
+        
     def _tokenize_prefix(self, byte_string):
+        
         string = str(byte_string, encoding="utf8")
-        # if '>assistant' in string:
-        #     last_idx_of_assistant = string.rfind('>assistant')
-        #     prefix = string[:last_idx_of_assistant]
-        # prefix, assistant_prefix = string.split('>assistant')
+
 
         token_ids = self.encode(string)
         bytes_position = []
 
-        for i in range(len(token_ids)):
-            _ids = token_ids[: i + 1]
-            _s = self.decode(_ids)
+            
+        _s = ''
+        for i in tqdm(range(len(token_ids))):
+            _s = _s + self.decode(token_ids[i])
             _bytes = bytes(_s, encoding="utf8")
             bytes_position.append(len(_bytes))
-
+            
         posible_end_tokens = []
         if len(bytes_position):
             last_byte = _bytes[bytes_position[-2] :]
@@ -227,7 +231,7 @@ def prepare_model_guidance(
     model_path="/mnt/nfs-data/kilm-storage/public-llm/Qwen-72B-Chat-Int4/",
     device_map="auto",
     do_update_lm_head=False,
-    compute_log_probs=True,
+    compute_log_probs=False,
     **kwargs,
 ):
     model, tokenizer = __get_qwen(model_path, device_map)
