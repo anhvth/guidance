@@ -45,7 +45,8 @@ class Qwen(Transformers):
         **kwargs,
     ):
         logger.info("Set tokenizer.eos_token_id = tokenizer.eod_id")
-        tokenizer.eos_token_id = tokenizer.eod_id
+        if hasattr(tokenizer, "eod_id"):
+            tokenizer.eos_token_id = tokenizer.eod_id
 
         self.generated_logits = []
         super().__init__(
@@ -140,12 +141,12 @@ class Qwen(Transformers):
             cache_token_ids.extend(new_token_ids)
             logits = model_out.logits[0, -1, :].float()
             # if self.compute_log_probs:
-            logits = logits.softmax(-1)
+            # logits = logits.softmax(-1)
             self._cache_state["logits"] = logits.cpu().numpy()
-            scores, ids = model_out.logits[0, -1, :].softmax(-1).topk(2)
-            topk = {}
-            for i in range(len(ids)):
-                topk[self.decode([ids[i].item()])] = scores[i].item()
+            # scores, ids = model_out.logits[0, -1, :].softmax(-1).topk(2)
+            # topk = {}
+            # for i in range(len(ids)):
+            #     topk[self.decode([ids[i].item()])] = scores[i].item()
             # print("topk", topk)
 
         return self._cache_state["logits"]
@@ -197,3 +198,46 @@ class QwenChat(Qwen, Chat):
             The name of the role, like "user", or "assistant"
         """
         return "<|im_end|>\n"
+
+
+from speedy import imemoize
+
+
+@imemoize
+def __get_qwen(model_path, device_map):
+    import transformers
+
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
+        model_path, trust_remote_code=True
+    )
+    if isinstance(device_map, list):
+        device_map = {i: d for i, d in enumerate(device_map)}
+    model = transformers.AutoModelForCausalLM.from_pretrained(
+        model_path,
+        device_map=device_map,
+        trust_remote_code=True,
+        quantization_config=transformers.GPTQConfig(bits=4, disable_exllama=True)
+        if "int4" in model_path.lower()
+        else None,
+    ).eval()
+    return model, tokenizer
+
+
+def prepare_model_guidance(
+    model_path="/mnt/nfs-data/kilm-storage/public-llm/Qwen-72B-Chat-Int4/",
+    device_map="auto",
+    do_update_lm_head=False,
+    compute_log_probs=True,
+    **kwargs,
+):
+    model, tokenizer = __get_qwen(model_path, device_map)
+    from llm_lora.qwen_utils import update_lm_head
+    if do_update_lm_head:
+        update_lm_head(model, tokenizer)
+    qwen = QwenChat(
+        model=model,
+        tokenizer=tokenizer,
+        compute_log_probs=compute_log_probs,
+        **kwargs,
+    )
+    return qwen

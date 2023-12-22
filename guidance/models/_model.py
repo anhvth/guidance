@@ -33,7 +33,8 @@ nodisp_pattern = re.compile(r"&lt;\|\|_#NODISP_\|\|&gt;.*?&lt;\|\|_/NODISP_\|\|&
 html_pattern = re.compile(r"&lt;\|\|_html:(.*?)_\|\|&gt;", flags=re.DOTALL)
 image_pattern = re.compile(r"&lt;\|_image:(.*?)\|&gt;")
 
-from ..library._block import OPEN_BLOCKS
+
+
     
 class Model:
     '''A guidance model object, which represents a sequence model in a given state.
@@ -229,7 +230,7 @@ class Model:
         value : guidance grammar
             The grammar used to extend the current model.
         '''
-
+        from ..library._block import OPEN_BLOCKS
         # create the new lm object we will return
         # (we need to do this since Model objects are immutable)
         lm = self.copy()
@@ -793,7 +794,6 @@ type {function['name']} = (_: {{"""
                     if torch:
                         # check if the sum of logits close to 1
                         if abs(np.sum(logits) - 1) > 1e-3:
-                            logger.warning(f"Logits sum to {np.sum(logits)} instead of 1.0!")
                             probs = torch.nn.functional.softmax(torch.tensor(logits), dim=-1).cpu().numpy() # note we don't adjust for temp since we consider that a sampling step, not part of the probs
                         else:
                             probs = torch.tensor(logits).cpu().numpy()
