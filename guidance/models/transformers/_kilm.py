@@ -32,7 +32,7 @@ import time
 #     return lm + _role("system", f)
 
 
-class Qwen(Transformers):
+class Kilm(Transformers):
     def __init__(
         self,
         model=None,
@@ -101,14 +101,15 @@ class Qwen(Transformers):
         # reset the cache length according to that number of positions
         past_key_values = self._cache_state["past_key_values"]
         past_length = (
-            past_key_values[0][0].size(1) if past_key_values is not None else 0
+            past_key_values[0][0].size(2) if past_key_values is not None else 0
         )
+
         if past_length > num_cached:
             past_length = max(
                 0, num_cached - 1
             )  # note we recompute the last token because we don't bother to handle the special case of just computing logits
             self._cache_state["past_key_values"] = tuple(
-                tuple(p[:, :past_length] for p in v) for v in past_key_values
+                tuple(p[:, :, :past_length] for p in v) for v in past_key_values
             )
         cache_token_ids[past_length:] = []
 
@@ -188,7 +189,7 @@ class Qwen(Transformers):
         return token_ids, bytes_position
 
 
-class QwenChat(Qwen, Chat):
+class KilmChat(Kilm, Chat):
     def get_role_end(self, role_name=None):
         """The ending bytes for a role.
 
@@ -202,49 +203,3 @@ class QwenChat(Qwen, Chat):
             The name of the role, like "user", or "assistant"
         """
         return "<|im_end|>\n"
-
-
-from speedy import imemoize
-
-
-@imemoize
-def __get_qwen(model_path, device_map):
-    import transformers
-
-    tokenizer = transformers.AutoTokenizer.from_pretrained(
-        model_path, trust_remote_code=True
-    )
-    if isinstance(device_map, list):
-        device_map = {i: d for i, d in enumerate(device_map)}
-    model = transformers.AutoModelForCausalLM.from_pretrained(
-        model_path,
-        device_map=device_map,
-        trust_remote_code=True,
-        quantization_config=transformers.GPTQConfig(bits=4, disable_exllama=True)
-        if "int4" in model_path.lower()
-        else None,
-    ).eval()
-    return model, tokenizer
-
-
-def prepare_model_guidance(
-    model_path="/mnt/nfs-data/kilm-storage/public-llm/Qwen-72B-Chat-Int4/",
-    device_map="auto",
-    do_update_lm_head=False,
-    compute_log_probs=False,
-    **kwargs,
-):
-    model, tokenizer = __get_qwen(model_path, device_map)
-    if do_update_lm_head:
-        try:
-            from llm_lora.qwen_utils import update_lm_head
-            update_lm_head(model, tokenizer)
-        except:
-            pass
-    qwen = QwenChat(
-        model=model,
-        tokenizer=tokenizer,
-        compute_log_probs=compute_log_probs,
-        **kwargs,
-    )
-    return qwen

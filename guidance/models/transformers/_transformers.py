@@ -46,8 +46,14 @@ class Transformers(Model):
                 byte_tokens.append(byte_coded)
         else:
             byte_tokens = []
+            def _tokenize(i):
+                out = tkz.convert_ids_to_tokens(i)
+                if out is None:
+                    out = '<unk>'
+                return out
             for i in range(len(tkz)):
-                s = tkz.convert_tokens_to_string(['a', tkz.convert_ids_to_tokens(i)])
+                # import ipdb; ipdb.set_trace()
+                s = tkz.convert_tokens_to_string(['a', _tokenize(i)])
                 if s[0] == 'a':
                     s = s[1:]
                 elif s[1] == 'a':
