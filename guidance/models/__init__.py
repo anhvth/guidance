@@ -9,5 +9,5 @@ from ._lite_llm import LiteLLMChat, LiteLLMInstruct, LiteLLMCompletion
 from ._cohere import CohereCompletion, CohereInstruct
 from . import transformers
 from ._anthropic import AnthropicChat
-from .transformers._qwen import Qwen, QwenChat, prepare_model_guidance
+from .transformers._qwen import Qwen, QwenChat, get_qwen_guidance
 from .transformers._kilm import Kilm, KilmChat

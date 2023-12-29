@@ -227,8 +227,8 @@ def __get_qwen(model_path, device_map):
     return model, tokenizer
 
 
-def prepare_model_guidance(
-    model_path="/mnt/nfs-data/kilm-storage/public-llm/Qwen-72B-Chat-Int4/",
+def get_qwen_guidance(
+    model_path="/public-llm/Qwen-72B-Chat-Int4/",
     device_map="auto",
     do_update_lm_head=False,
     compute_log_probs=False,
@@ -239,8 +239,8 @@ def prepare_model_guidance(
         try:
             from llm_lora.qwen_utils import update_lm_head
             update_lm_head(model, tokenizer)
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Failing to update lm head: {e}")
     qwen = QwenChat(
         model=model,
         tokenizer=tokenizer,
