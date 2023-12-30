@@ -1,6 +1,6 @@
 import torch
 from tqdm import tqdm
-
+import os
 import guidance
 from ._transformers import Transformers
 from .._model import Model, Chat
@@ -155,25 +155,18 @@ class Qwen(Transformers):
     def _cleanup_tokens(self, token_ids, token_byte_positions):
         return token_ids, token_byte_positions
 
-
-
-
-        
     def _tokenize_prefix(self, byte_string):
-        
         string = str(byte_string, encoding="utf8")
-
 
         token_ids = self.encode(string)
         bytes_position = []
 
-            
-        _s = ''
+        _s = ""
         for i in range(len(token_ids)):
             _s = _s + self.decode(token_ids[i])
             _bytes = bytes(_s, encoding="utf8")
             bytes_position.append(len(_bytes))
-            
+
         posible_end_tokens = []
         if len(bytes_position):
             last_byte = _bytes[bytes_position[-2] :]
@@ -227,17 +220,28 @@ def __get_qwen(model_path, device_map):
     return model, tokenizer
 
 
+from speedy import is_interactive
+
+
 def get_qwen_guidance(
     model_path="/public-llm/Qwen-72B-Chat-Int4/",
     device_map="auto",
     do_update_lm_head=False,
     compute_log_probs=False,
+    echo=None,
     **kwargs,
 ):
+    if echo is None:
+        echo = is_interactive()
+    assert os.path.exists(model_path), f"Model path {model_path} does not exist"
+    logger.info(
+        'Load Qwen from "{}" with device_map "{}"'.format(model_path, device_map)
+    )
     model, tokenizer = __get_qwen(model_path, device_map)
     if do_update_lm_head:
         try:
             from llm_lora.qwen_utils import update_lm_head
+
             update_lm_head(model, tokenizer)
         except Exception as e:
             logger.warning(f"Failing to update lm head: {e}")
@@ -245,6 +249,7 @@ def get_qwen_guidance(
         model=model,
         tokenizer=tokenizer,
         compute_log_probs=compute_log_probs,
+        echo=echo,
         **kwargs,
     )
     return qwen
