@@ -52,7 +52,6 @@ class Transformers(Model):
                     out = '<unk>'
                 return out
             for i in range(len(tkz)):
-                # import ipdb; ipdb.set_trace()
                 s = tkz.convert_tokens_to_string(['a', _tokenize(i)])
                 if s[0] == 'a':
                     s = s[1:]

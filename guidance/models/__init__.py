@@ -10,4 +10,4 @@ from ._cohere import CohereCompletion, CohereInstruct
 from . import transformers
 from ._anthropic import AnthropicChat
 from .transformers._qwen import Qwen, QwenChat, get_qwen_guidance
-from .transformers._kilm import Kilm, KilmChat
+from .transformers._kilm import Kilm, KilmChat, get_kilm_guidance

@@ -1,6 +1,7 @@
 import torch
 from tqdm import tqdm
-
+from speedy import is_interactive
+import os
 import guidance
 from ._transformers import Transformers
 from .._model import Model, Chat
@@ -31,8 +32,8 @@ import time
 # def system(lm, f):
 #     return lm + _role("system", f)
 
-
-class Kilm(Transformers):
+from ._qwen import Qwen, QwenChat
+class Kilm(Qwen):
     def __init__(
         self,
         model=None,
@@ -100,6 +101,7 @@ class Kilm(Transformers):
 
         # reset the cache length according to that number of positions
         past_key_values = self._cache_state["past_key_values"]
+        # import ipdb; ipdb.set_trace()
         past_length = (
             past_key_values[0][0].size(2) if past_key_values is not None else 0
         )
@@ -113,11 +115,7 @@ class Kilm(Transformers):
             )
         cache_token_ids[past_length:] = []
 
-        # call the model
         new_token_ids = token_ids[past_length:]
-        # print('Past length', past_length, 'new length', len(new_token_ids))
-        # if len(new_token_ids)==0:
-        # import ipdb; ipdb.set_trace()
 
         if len(new_token_ids) > 0:
             with torch.no_grad():
@@ -140,41 +138,30 @@ class Kilm(Transformers):
 
             # save the results
             self._cache_state["past_key_values"] = model_out.past_key_values
+            # import ipdb; ipdb.set_trace()
             cache_token_ids.extend(new_token_ids)
             logits = model_out.logits[0, -1, :].float()
-            # if self.compute_log_probs:
-            # logits = logits.softmax(-1)
+
             self._cache_state["logits"] = logits.cpu().float().numpy()
-            # scores, ids = model_out.logits[0, -1, :].softmax(-1).topk(2)
-            # topk = {}
-            # for i in range(len(ids)):
-            #     topk[self.decode([ids[i].item()])] = scores[i].item()
-            # print("topk", topk)
+
 
         return self._cache_state["logits"]
 
     def _cleanup_tokens(self, token_ids, token_byte_positions):
         return token_ids, token_byte_positions
 
-
-
-
-        
     def _tokenize_prefix(self, byte_string):
-        
         string = str(byte_string, encoding="utf8")
-
 
         token_ids = self.encode(string)
         bytes_position = []
 
-            
-        _s = ''
+        _s = ""
         for i in range(len(token_ids)):
             _s = _s + self.decode(token_ids[i])
             _bytes = bytes(_s, encoding="utf8")
             bytes_position.append(len(_bytes))
-            
+
         posible_end_tokens = []
         if len(bytes_position):
             last_byte = _bytes[bytes_position[-2] :]
@@ -203,3 +190,51 @@ class KilmChat(Kilm, Chat):
             The name of the role, like "user", or "assistant"
         """
         return "<|im_end|>\n"
+
+
+from speedy import imemoize
+
+
+@imemoize
+def __get_kilm(model_path, device_map):
+    import transformers
+
+    tokenizer = transformers.AutoTokenizer.from_pretrained(
+        model_path, trust_remote_code=True
+    )
+    if isinstance(device_map, list):
+        device_map = {i: d for i, d in enumerate(device_map)}
+    model = transformers.AutoModelForCausalLM.from_pretrained(
+        model_path,
+        device_map=device_map,
+        trust_remote_code=True,
+        quantization_config=transformers.GPTQConfig(bits=4, disable_exllama=True)
+        if "int4" in model_path.lower()
+        else None,
+    ).eval()
+    return model, tokenizer
+
+
+def get_kilm_guidance(
+    model_path,
+    device_map="auto",
+    do_update_lm_head=False,
+    compute_log_probs=False,
+    echo=None,
+    **kwargs,
+):
+    if echo is None:
+        echo = is_interactive()
+    assert os.path.exists(model_path), f"Model path {model_path} does not exist"
+    logger.info(
+        'Load Qwen from "{}" with device_map "{}"'.format(model_path, device_map)
+    )
+    model, tokenizer = __get_kilm(model_path, device_map)
+    qwen = KilmChat(
+        model=model,
+        tokenizer=tokenizer,
+        compute_log_probs=compute_log_probs,
+        echo=echo,
+        **kwargs,
+    )
+    return qwen

@@ -114,10 +114,6 @@ class Qwen(Transformers):
 
         # call the model
         new_token_ids = token_ids[past_length:]
-        # print('Past length', past_length, 'new length', len(new_token_ids))
-        # if len(new_token_ids)==0:
-        # import ipdb; ipdb.set_trace()
-
         if len(new_token_ids) > 0:
             with torch.no_grad():
                 model_out = self.model_obj(
@@ -141,14 +137,8 @@ class Qwen(Transformers):
             self._cache_state["past_key_values"] = model_out.past_key_values
             cache_token_ids.extend(new_token_ids)
             logits = model_out.logits[0, -1, :].float()
-            # if self.compute_log_probs:
-            # logits = logits.softmax(-1)
             self._cache_state["logits"] = logits.cpu().float().numpy()
-            # scores, ids = model_out.logits[0, -1, :].softmax(-1).topk(2)
-            # topk = {}
-            # for i in range(len(ids)):
-            #     topk[self.decode([ids[i].item()])] = scores[i].item()
-            # print("topk", topk)
+
 
         return self._cache_state["logits"]
 
