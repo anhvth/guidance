@@ -95,12 +95,72 @@ def giaothong_NLI(lm, query, gt_answer, k=1, db="docs"):
         
     return lm
 
+@guidance
+def giaothong_NLI_Vietnamese(lm, query, gt_answer, k=1, db="docs"):
+    port = 19003 if db == "qa" else 19001
+    if k is None:
+        # elase randomly choose int form 5 to 10
+        k = 3 if db == "qa" else np.random.randint(3, 7)
+    relevant_docs = search(query, k=10, port=port)
+    retrived_doc = np.random.choice(relevant_docs)
+    retrived_doc = retrived_doc['text']
+    with system():
+        lm = (
+            lm +\
+    '''
+    Bạn đã được giao nhiệm vụ Suy Luận Ngôn Ngữ Tự Nhiên (NLI), bao gồm việc phân tích một câu hỏi, câu trả lời đã cho, và tài liệu đã truy xuất. Hãy làm theo các bước sau:
+    
+    Hiểu Rõ Câu Hỏi: Nắm bắt toàn bộ ngữ cảnh và chi tiết cụ thể.
+    Phân Tích Câu Trả Lời: Xem xét các điểm chính, lập luận, và chi tiết của nó.
+    Xem Xét Tài Liệu: Tìm kiếm thông tin liên quan đến câu hỏi và câu trả lời.
+    Mục tiêu là xác định liệu tài liệu có hỗ trợ cho câu hỏi và câu trả lời hay không.
+    '''
+        )
+    with user():
+        lm += f'''
+        Câu hỏi (question): ```{query}```
+        
+        Câu trả lời mong đợi (expected answer): ```{gt_answer}```
+        
+        Tài liệu đã truy xuất (retrived document): ```{retrived_doc}```
+                
+        Mục tiêu là xác định liệu tài liệu có hỗ trợ cho câu hỏi và câu trả lời hay không.
+    
+        '''
+    with assistant():
+        stop_pattern = '\n**'
+        lm += f'''
+        Để xác định liệu tài liệu đã truy xuất có hỗ trợ cho câu hỏi và câu trả lời hay không, chúng ta sẽ:
+    
+        1. Phân Tích Bối Cảnh Tài Liệu: Đánh giá nội dung tổng quan và ngữ cảnh của tài liệu.
+        2. So Sánh Câu Hỏi và Tài Liệu: Kiểm tra sự tham chiếu trực tiếp hoặc các khái niệm liên quan trong tài liệu phù hợp với câu hỏi.
+        3. Liên Hệ Câu Trả Lời và Tài Liệu: Xác định xem các yếu tố chính hoặc chi tiết cụ thể của câu trả lời có được hỗ trợ bởi tài liệu không.
+        4. Đánh Giá Mâu Thuẫn: Xác định bất kỳ mâu thuẫn nào giữa tài liệu và câu trả lời mong đợi.
+    
+        Bây giờ tôi sẽ thực hiện các bước trên để phân tích tài liệu đã truy xuất.
+        
+        **Phân Tích Bối Cảnh Tài Liệu** 
+        Tài liệu chủ yếu thảo luận về {gen(stop=stop_pattern)} 
+        **So Sánh Câu Hỏi và Tài Liệu**
+        {gen(stop=stop_pattern)} 
+        **Liên Hệ Câu Trả Lời và Tài Liệu**
+        {gen(stop=stop_pattern)} 
+        **Đánh Giá Mâu Thuẫn**
+        {gen(stop=stop_pattern)} 
+        **Kết Luận Cuối Cùng**
+        Dựa trên phân tích, tài liệu {gen(stop='<|im_end|>')}
+        '''
+    with user():
+        lm += 'Hãy đánh giá mức độ liên quan trên thang điểm 1-5, với 5 là hoàn toàn liên quan, 1 là hoàn toàn không liên quan'
+    with assistant():
+        lm += 'Mức độ liên quan (1-5): ' + gen(stop='**')
+    return lm
 
 if __name__ == "__main__":
     data = load_by_ext(
         "../tvpl_crawler/data/tvpl_qa_short_answer_giaothong/qa_short_answer/*"
     )
-    output_dir = "../tvpl_crawler/data/tvpl_qa_short_answer_giaothong/qa_short_answer_nli_conversation"
+    output_dir = "../tvpl_crawler/data/tvpl_qa_short_answer_giaothong/qa_short_answer_nli_conversation_vietnamese"
     mkdir_or_exist(output_dir)
 
     all_questions = []
@@ -145,9 +205,9 @@ if __name__ == "__main__":
                         # qwen = models.get_qwen_guidance(
                         #     device_map=0, do_update_lm_head=True
                         # )
-                        qwen = models.get_qwen_guidance('/public-llm/Qwen-14B-Chat-Int4/',device_map=0, do_update_lm_head=True)
+                        qwen = models.get_qwen_guidance('/public-llm/Qwen-72B-Chat-Int4/',device_map=0, do_update_lm_head=True)
                     # lm = qwen + giaothong_rag(query=qa["question"], db="docs")
-                    lm = qwen+giaothong_NLI(qa['question'], qa['short_answer'])
+                    lm = qwen+giaothong_NLI_Vietnamese(qa['question'], qa['short_answer'])
 
                     rag_conversation = lm._current_prompt()
                     with open(out_path, "w") as f:

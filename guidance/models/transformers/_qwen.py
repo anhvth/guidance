@@ -78,7 +78,6 @@ class Qwen(Transformers):
         # _text = self.decode(token_ids)
         # new_token_ids = self.encode(_text)
         # assert len(new_token_ids) == len(token_ids)
-        # import ipdb; ipdb.set_trace()
         if len(token_ids) >= getattr(
             self.model_obj.config, "max_position_embeddings", 1e10
         ):
@@ -139,7 +138,6 @@ class Qwen(Transformers):
             logits = model_out.logits[0, -1, :].float()
             self._cache_state["logits"] = logits.cpu().float().numpy()
 
-
         return self._cache_state["logits"]
 
     def _cleanup_tokens(self, token_ids, token_byte_positions):
@@ -156,7 +154,6 @@ class Qwen(Transformers):
             _s = _s + self.decode(token_ids[i])
             _bytes = bytes(_s, encoding="utf8")
             bytes_position.append(len(_bytes))
-
         posible_end_tokens = []
         if len(bytes_position):
             last_byte = _bytes[bytes_position[-2] :]
@@ -190,31 +187,31 @@ class QwenChat(Qwen, Chat):
 from speedy import imemoize
 
 
-@imemoize
-def __get_qwen(model_path, device_map):
-    import transformers
+# @imemoize
+# def __get_qwen(model_path, device_map):
+#     import transformers
 
-    tokenizer = transformers.AutoTokenizer.from_pretrained(
-        model_path, trust_remote_code=True
-    )
-    if isinstance(device_map, list):
-        device_map = {i: d for i, d in enumerate(device_map)}
-    model = transformers.AutoModelForCausalLM.from_pretrained(
-        model_path,
-        device_map=device_map,
-        trust_remote_code=True,
-        quantization_config=transformers.GPTQConfig(bits=4, disable_exllama=True)
-        if "int4" in model_path.lower()
-        else None,
-    ).eval()
-    return model, tokenizer
-
+#     tokenizer = transformers.AutoTokenizer.from_pretrained(
+#         model_path, trust_remote_code=True
+#     )
+#     # if isinstance(device_map, list):
+#     #     device_map = {i: d for i, d in enumerate(device_map)}
+#     model = transformers.AutoModelForCausalLM.from_pretrained(
+#         model_path,
+#         device_map=device_map,
+#         trust_remote_code=True,
+#         quantization_config=transformers.GPTQConfig(bits=4, disable_exllama=True)
+#         if "int4" in model_path.lower()
+#         else None,
+#     ).eval()
+#     return model, tokenizer
+from llm_lora.load_transformer import load_transformer_llm
 
 from speedy import is_interactive
 
 
 def get_qwen_guidance(
-    model_path="/public-llm/Qwen-72B-Chat-Int4/",
+    model_path='qwen-72-chat-int',
     device_map="auto",
     do_update_lm_head=False,
     compute_log_probs=False,
@@ -223,11 +220,11 @@ def get_qwen_guidance(
 ):
     if echo is None:
         echo = is_interactive()
-    assert os.path.exists(model_path), f"Model path {model_path} does not exist"
+    # assert os.path.exists(model_path), f"Model path {model_path} does not exist"
     logger.info(
         'Load Qwen from "{}" with device_map "{}"'.format(model_path, device_map)
     )
-    model, tokenizer = __get_qwen(model_path, device_map)
+    model, tokenizer = load_transformer_llm(model_path, device_map=device_map)
     if do_update_lm_head:
         try:
             from llm_lora.qwen_utils import update_lm_head
