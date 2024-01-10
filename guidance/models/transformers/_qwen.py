@@ -1,12 +1,17 @@
 import torch
 from tqdm import tqdm
 import os
-import guidance
+from llm_lora.load_transformer import load_transformer_llm
+
+from speedy import is_interactive
+
+# import guidance
 from ._transformers import Transformers
 from .._model import Model, Chat
 from loguru import logger
 from functools import lru_cache
 import time
+import guidance
 
 
 # @guidance(stateless=False)
@@ -205,13 +210,10 @@ from speedy import imemoize
 #         else None,
 #     ).eval()
 #     return model, tokenizer
-from llm_lora.load_transformer import load_transformer_llm
-
-from speedy import is_interactive
 
 
 def get_qwen_guidance(
-    model_path='qwen-72-chat-int',
+    model_path="qwen-72-chat-int",
     device_map="auto",
     do_update_lm_head=False,
     compute_log_probs=False,
